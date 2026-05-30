@@ -1,5 +1,9 @@
 # Changelog
 
+## \[0.35.4]
+
+- [`47d38f36`](https://github.com/tauri-apps/tao/commit/47d38f369f7fb6778df90744faa39d25ab0e3bcc) ([#1228](https://github.com/tauri-apps/tao/pull/1228) by [@ushinohama966](https://github.com/tauri-apps/tao/../../ushinohama966)) fix(linux): map JIS keyboard specific keys (`Zenkaku_Hankaku`, `Hiragana_Katakana`, `Henkan`, `Muhenkan`) in `raw_key_to_key` to prevent them from becoming `Key::Unidentified`.
+
 ## \[0.35.3]
 
 - [`1bcd5165`](https://github.com/tauri-apps/tao/commit/1bcd51652763fa6d9512370af6adaea140053891) ([#1224](https://github.com/tauri-apps/tao/pull/1224) by [@brtinney](https://github.com/tauri-apps/tao/../../brtinney)) fix(android): don't panic on `onNewIntent` when `intent.getType()` returns null
