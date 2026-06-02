@@ -369,6 +369,7 @@ impl<T> EventLoopRunner<T> {
       }
 
       (Destroyed, state) => {
+        self.runner_state.set(Destroyed);
         debug!("Eventloop is already destroyed, cannot move to {state:?}");
       }
     }
