@@ -201,11 +201,26 @@ impl<T> EventLoopRunner<T> {
 
 /// Event dispatch functions.
 impl<T> EventLoopRunner<T> {
+  /// Returns true if the event loop is destroyed and no further processing
+  /// should occur. All public entry points must check this before touching
+  /// any internal state — once Destroyed, resources referenced by event
+  /// handlers may have been freed and touching them is UB.
+  #[inline]
+  fn is_destroyed(&self) -> bool {
+    self.runner_state.get() == RunnerState::Destroyed
+  }
+
   pub(crate) unsafe fn poll(&self) {
+    if self.is_destroyed() {
+      return;
+    }
     self.move_state_to(RunnerState::HandlingMainEvents);
   }
 
   pub(crate) unsafe fn send_event(&self, event: Event<'_, T>) {
+    if self.is_destroyed() {
+      return;
+    }
     if let Event::RedrawRequested(_) = event {
       if self.runner_state.get() != RunnerState::HandlingRedrawEvents {
         // TODO: Consider removing log once https://github.com/rust-windowing/winit/pull/2767 gets adopted.
@@ -228,10 +243,16 @@ impl<T> EventLoopRunner<T> {
   }
 
   pub(crate) unsafe fn main_events_cleared(&self) {
+    if self.is_destroyed() {
+      return;
+    }
     self.move_state_to(RunnerState::HandlingRedrawEvents);
   }
 
   pub(crate) unsafe fn redraw_events_cleared(&self) {
+    if self.is_destroyed() {
+      return;
+    }
     self.move_state_to(RunnerState::Idle);
   }
 
@@ -258,6 +279,9 @@ impl<T> EventLoopRunner<T> {
 
   unsafe fn dispatch_buffered_events(&self) {
     loop {
+      if self.is_destroyed() {
+        return;
+      }
       // We do this instead of using a `while let` loop because if we use a `while let`
       // loop the reference returned `borrow_mut()` doesn't get dropped until the end
       // of the loop's body and attempts to add events to the event buffer while in
