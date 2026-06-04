@@ -221,20 +221,27 @@ impl<T> EventLoopRunner<T> {
     if self.is_destroyed() {
       return;
     }
-    if let Event::RedrawRequested(_) = event {
+    if self.should_buffer() {
+      // The runner is already borrowed: we're in the middle of an event loop
+      // invocation, possibly re-entered synchronously by WebView2 (which pumps
+      // window messages from inside its own callbacks). Buffer the event for
+      // later instead of dispatching it now. This must run BEFORE the
+      // RedrawRequested fast-path below: that path used to call the event
+      // handler immediately even while it was already taken by the outer
+      // invocation, which is the re-entrancy described in tao#1180 and the
+      // source of the access-violation-on-poisoned-pointer crash observed
+      // during idle/teardown.
+      self
+        .event_buffer
+        .borrow_mut()
+        .push_back(BufferedEvent::from_event(event))
+    } else if let Event::RedrawRequested(_) = event {
       if self.runner_state.get() != RunnerState::HandlingRedrawEvents {
         // TODO: Consider removing log once https://github.com/rust-windowing/winit/pull/2767 gets adopted.
         debug!("RedrawRequested dispatched without explicit MainEventsCleared");
         self.move_state_to(RunnerState::HandlingRedrawEvents);
       }
       self.call_event_handler(event);
-    } else if self.should_buffer() {
-      // If the runner is already borrowed, we're in the middle of an event loop invocation. Add
-      // the event to a buffer to be processed later.
-      self
-        .event_buffer
-        .borrow_mut()
-        .push_back(BufferedEvent::from_event(event))
     } else {
       self.move_state_to(RunnerState::HandlingMainEvents);
       self.call_event_handler(event);
@@ -263,8 +270,28 @@ impl<T> EventLoopRunner<T> {
   unsafe fn call_event_handler(&self, event: Event<'_, T>) {
     self.catch_unwind(|| {
             let mut control_flow = self.control_flow.take();
-            let mut event_handler = self.event_handler.take()
-                .expect("either event handler is re-entrant (likely), or no event handler is registered (very unlikely)");
+            // The handler is `take`n for the duration of the call, so a missing
+            // handler means one of two unsafe situations:
+            //   1. Re-entrancy: WebView2 synchronously pumped another message
+            //      into the event loop while we were already dispatching, so
+            //      the handler is owned by the outer (still-running) frame.
+            //   2. Post-teardown: `reset_runner` has already cleared the
+            //      handler but a stray window message is still being dispatched.
+            // The original code `.expect()`ed here and panicked. During
+            // teardown that panic raced freed window/webview state and surfaced
+            // as an access violation reading a poisoned pointer
+            // (0x0808080808080808) inside this dispatch closure — exactly the
+            // crash class in tao#1180. Drop the event instead: in case (1) the
+            // outer dispatch will continue the loop correctly; in case (2)
+            // there is nothing left to deliver to.
+            let mut event_handler = match self.event_handler.take() {
+                Some(handler) => handler,
+                None => {
+                    self.control_flow.set(control_flow);
+                    debug!("event handler re-entered or already reset; dropping event to avoid use-after-free");
+                    return;
+                }
+            };
 
             if let ControlFlow::ExitWithCode(code) = control_flow  {
                 event_handler(event, &mut ControlFlow::ExitWithCode(code));
